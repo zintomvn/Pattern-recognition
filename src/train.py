@@ -176,11 +176,11 @@ class ANRLTask(BaseTask):
         # calculate the domain loss and discrimination loss
         AA_loss = self.criterion_3(feat_pool_real, center_real[index].detach())
         AB_loss = 0
-        for k in range(3):
+        for k in range(2):
             if not k == index:
                 AB_loss += self.criterion_3(feat_pool_real, center_real[k].detach())
 
-        loss_domain = AB_loss / 2 - AA_loss
+        loss_domain = AB_loss - AA_loss
 
         RR_loss = self.criterion_3(feat_pool_real, center_real[index].detach())
         RF_loss = self.criterion_3(feat_pool_real, center_fake[index].detach())
@@ -213,8 +213,8 @@ class ANRLTask(BaseTask):
         self.model.train()
 
         # to initialize the centor
-        center_real = torch.ones(3, 384).to(self.device)
-        center_fake = torch.ones(3, 384).to(self.device)
+        center_real = torch.ones(2, 384).to(self.device)
+        center_fake = torch.ones(2, 384).to(self.device)
 
         for i, (datas_pos, datas_neg) in enumerate(zip(self.dg_train_pos, self.dg_train_neg)):
             # generate the meta_train and meta_test index

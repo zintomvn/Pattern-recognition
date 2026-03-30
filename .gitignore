@@ -1,0 +1,37 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env
+venv/
+.env/
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment variables
+.env
+
+# Model files
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Dataset
+data/
+datasets/
+
+# Output folders
+runs/
+outputs/
+checkpoints/
