@@ -29,9 +29,10 @@ Thumbs.db
 
 # Dataset
 data/
-datasets/
+/datasets/
 
 # Output folders
 runs/
 outputs/
 checkpoints/
+wandb/

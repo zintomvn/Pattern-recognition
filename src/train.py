@@ -54,6 +54,10 @@ class ANRLTask(BaseTask):
     def fit(self):
         """ control training and validating process
         """
+        # --test mode: force local_rank=0 so only rank-0 logs to avoid rank mismatches on CPU
+        if getattr(self.cfg, 'test_only', False):
+            self.cfg.local_rank = 0
+
         if self.cfg.local_rank == 0:
             self.logger.info('=> Starting training')
         for epoch in range(self.start_epoch, self.cfg.train.epochs + 1):
@@ -63,7 +67,8 @@ class ANRLTask(BaseTask):
 
             self.train(epoch)
             self.validate(epoch)
-            self.scheduler.step(epoch)
+            if hasattr(self, 'scheduler') and self.scheduler is not None:
+                self.scheduler.step(epoch)
 
         if self.cfg.local_rank == 0:
             self.cfg.distributed = False
@@ -376,8 +381,8 @@ class ANRLTask(BaseTask):
                 if i % self.cfg.train.print_interval == 0:
                     self.logger.info(progress.display(i))
 
-        # record the results via wandb
-        if self.cfg.local_rank == 0:
+        # record the results via wandb (skip in --test mode where wandb is not initialized)
+        if self.cfg.local_rank == 0 and not getattr(self.cfg, 'test_only', False):
             wandb.log(
                 {
                     'Meta_train_Acc': train_acces.avg,
@@ -395,17 +400,24 @@ class ANRLTask(BaseTask):
 
     def validate(self, epoch):
         y_preds, y_trues = test_module(self.model, [self.dg_val_pos, self.dg_val_neg],
-                                       self._model_forward, distributed=True)
+                                       self._model_forward,
+                                       distributed=not getattr(self.cfg, 'test_only', False),
+                                       device=str(self.device))
 
         # calculate the metrics
         metrics = self._evaluate(y_preds, y_trues, threshold='auto')
 
         if self.cfg.local_rank == 0:
-            self._save_checkpoints(metrics, epoch, monitor_metric='AUC')
+            # saver is only built during full training (not in --test mode)
+            if hasattr(self, 'saver') and self.saver is not None:
+                self._save_checkpoints(metrics, epoch, monitor_metric='AUC')
             self._log_data(metrics, epoch, prefix='val')
 
     def test(self):
         ckpt_path = f'{self.cfg.exam_dir}/ckpts/model_best.pth.tar'
+        if not os.path.exists(ckpt_path):
+            self.logger.warning(f'No checkpoint found at {ckpt_path} — skipping test (run training first).')
+            return
         checkpoint = torch.load(ckpt_path, weights_only=True)
 
         try:
@@ -415,7 +427,9 @@ class ANRLTask(BaseTask):
             self.model.load_state_dict(checkpoint['state_dict'])
         self.logger.info(f'resume model from {ckpt_path}')
 
-        y_preds, y_trues = test_module(self.model, [self.dg_test_pos, self.dg_test_neg], self._model_forward)
+        y_preds, y_trues = test_module(self.model, [self.dg_test_pos, self.dg_test_neg],
+                                       self._model_forward,
+                                       device=str(self.device))
         metric = cal_metrics(y_trues, y_preds, threshold='auto')
 
         self._log_data(metric, prefix='test')
