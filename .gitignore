@@ -36,3 +36,4 @@ runs/
 outputs/
 checkpoints/
 wandb/
+PRNet/Data/net-data
