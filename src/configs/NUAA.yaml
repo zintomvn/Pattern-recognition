@@ -1,6 +1,4 @@
 seed: 1234
-amp:
-  enabled: true
 # torch_home: /path/to/torch
 num_workers: 1
 
@@ -8,13 +6,12 @@ dataset:
   name: DG_Dataset
   DG_Dataset:
     use_LMDB: False
-    LMDB_root: /path/to/lmdb_database
-    train_pos_list1_path: ../data/processed/meta_lists/CASIA_train_pos.txt
-    train_neg_list1_path: ../data/processed/meta_lists/CASIA_train_neg.txt
-    train_pos_list2_path: ../data/processed/meta_lists/CASIA_test_pos.txt
-    train_neg_list2_path: ../data/processed/meta_lists/CASIA_test_neg.txt
-    train_pos_list3_path: ../data/processed/meta_lists/MSU-MFSD_test_pos.txt
-    train_neg_list3_path: ../data/processed/meta_lists/MSU-MFSD_test_neg.txt
+    train_pos_list1_path: ../data/processed/meta_lists/NUAA_train_pos.txt
+    train_neg_list1_path: ../data/processed/meta_lists/NUAA_train_neg.txt
+    train_pos_list2_path: ../data/processed/meta_lists/NUAA_test_pos.txt
+    train_neg_list2_path: ../data/processed/meta_lists/NUAA_test_neg.txt
+    train_pos_list3_path: ../data/processed/meta_lists/NUAA_train_pos.txt
+    train_neg_list3_path: ../data/processed/meta_lists/NUAA_test_neg.txt
     val_pos_list_path: ../data/processed/meta_lists/NUAA_train_pos.txt
     val_neg_list_path: ../data/processed/meta_lists/NUAA_train_neg.txt
     test_pos_list_path: ../data/processed/meta_lists/NUAA_test_pos.txt
@@ -75,27 +72,21 @@ scheduler:
     gamma: 0.5
 
 train:
-  epochs: 4
-  batch_size: 2
+  epochs: 2  
+  batch_size: 16
   print_interval: 10
-  metasize: 2
+  metasize: 1
   meta_step_size: 0.0001
 
 val:
-  batch_size: 2
+  batch_size: 16
 
 test:
-  batch_size: 2
+  batch_size: 16
   record_results: True
-
 
 wandb:
   project: ANRL
-  group: cm2n
+  group: CMtoN
   mode: offline
-  job_type: train
-  id: 
-  resume: "must"
-  save_code: True
-  name:
-  notes:
+  save_code: False

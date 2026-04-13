@@ -30,7 +30,7 @@ TMP_ROOT     = SCRIPT_DIR / ".." / "data" / "processed" / "tmp"   # data/process
 
 # ── Depth folder mapping ───────────────────────────────────────────────────────
 DEPTH_SUBDIR_MAP = {
-    "CASIA_database": "CASIA_database_depth",
+    "CASIA": "CASIA_depth",
     "MSU-MFSD":       "MSU-MFSD_depth",
     "NUAA":           "NUAA_depth",
     "ReplayAttack":   "ReplayAttack_depth",
@@ -77,10 +77,10 @@ def _collect_groups(list_keys: list, cfg_dg: dict) -> dict:
     Read every list file and group images by depth_dir.
 
     Returns:
-        Dict[depth_dir: Path] → (rgb_paths: list[Path], depth_dir: Path)
-        Only the depth_dir is needed for PRNet output.
+        Dict[depth_dir: Path] → list of RGB Paths (unique per depth_dir).
     """
-    groups = defaultdict(list)   # depth_dir → list of rgb Paths
+    groups = defaultdict(list)       # depth_dir → list of rgb Paths
+    seen_per_dir = defaultdict(set)  # depth_dir → set of resolved rgb_paths
 
     for key in list_keys:
         list_file = _resolve(cfg_dg[key])
@@ -100,20 +100,34 @@ def _collect_groups(list_keys: list, cfg_dg: dict) -> dict:
             rgb_path  = _resolve(img_path_str)
             depth_dir = _resolve(depth_path_str).parent
 
+            if rgb_path in seen_per_dir[depth_dir]:
+                continue
+            seen_per_dir[depth_dir].add(rgb_path)
             groups[depth_dir].append(rgb_path)
 
     return dict(groups)
 
 
 def _rename_depth_files(output_dir: Path) -> int:
-    """Rename frame_XXXX_depth.jpg → frame_XXXX.jpg in output_dir."""
+    """Rename frame_XXXX_depth.jpg -> frame_XXXX.jpg in output_dir. Skips if target exists."""
     renamed = 0
-    for f in output_dir.iterdir():
-        if "_depth." in f.name:
-            f.rename(f.parent / f.name.replace("_depth.", "."))
+    # Use glob to only find relevant files
+    for f in output_dir.glob("*_depth.*"):
+        # This replaces only the specific '_depth.' occurrence
+        new_name = f.name.replace("_depth.", ".")
+        target = f.with_name(new_name)
+        
+        if target.exists():
+            print(f"[WARN] Skip: {target.name} already exists.")
+            continue
+            
+        try:
+            f.rename(target)
             renamed += 1
+        except OSError as e:
+            print(f"[ERR ] Could not rename {f.name}: {e}")
+            
     return renamed
-
 
 def _run_prnet(rgb_paths: list, depth_dir: Path, tmp_dir: Path, force: bool = False) -> bool:
     """
@@ -121,28 +135,36 @@ def _run_prnet(rgb_paths: list, depth_dir: Path, tmp_dir: Path, force: bool = Fa
 
     Returns True if PRNet ran, False if skipped.
     """
-    # ── 1. Check if already done ──────────────────────────────────────────────
-    if not force and depth_dir.exists():
-        existing = [
-            f for f in depth_dir.iterdir()
-            if f.suffix.lower() in (".jpg", ".jpeg", ".png") and "_depth" not in f.name
-        ]
-        if existing:
-            print(f"[SKIP] already has {len(existing)} depth files: {depth_dir}")
-            return False
+    n = _rename_depth_files(depth_dir)
+    print(f"[OK  ] {n} initial rename depth files → {depth_dir.name}")
+
+    # ── 1. Per-file skip: only process files whose depth output is missing ────
+    depth_dir.mkdir(parents=True, exist_ok=True)
+    done, todo = [], []
+    for rgb_path in rgb_paths:
+        out_name = rgb_path.name
+        if (depth_dir / out_name).exists():
+            done.append(out_name)
+        else:
+            todo.append(rgb_path)
+
+    if not todo:
+        print(f"[SKIP] all {len(done)} already done: {depth_dir}")
+        return False
+    print(f"[INFO] {len(done)} already done, {len(todo)} to process: {depth_dir}")
+    rgb_paths = todo
 
     # ── 2. Create tmp dir ─────────────────────────────────────────────────────
     if tmp_dir.exists():
         shutil.rmtree(tmp_dir)
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    depth_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── 3. Copy only listed files into tmp ────────────────────────────────────
+    # ── 3. Copy only missing files into tmp ────────────────────────────────────
     for rgb_path in rgb_paths:
         if not rgb_path.exists():
             print(f"[WARN] file not found (skipping): {rgb_path}")
             continue
-        shutil.copy2(rgb_path, tmp_dir / rgb_path.name)
+        shutil.copyfile(rgb_path, tmp_dir / rgb_path.name)
 
     print(f"[RUN ] {tmp_dir}  ({len(rgb_paths)} files)")
     print(f"      → {depth_dir}")

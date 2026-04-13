@@ -27,6 +27,16 @@ def run_preprocessing(data_raw_dir, data_processed_dir):
 
     datasets = ['CASIA_database', 'MSU-MFSD', 'NUAA']
     dataset_dirs = {'CASIA_database': 'CASIA_faceAntisp', 'MSU-MFSD': 'MSU_MFSD', 'NUAA': 'NUAA Photograph Imposter Database'}
+
+    # Dataset
+    # casia: 2 dir train, test. Code mẫu.
+    # 
+    # msu: train.txt, test.txt
+    # nuaa: train.txt, test.txt, ...
+
+    # data/processed/<dataset>/<split>/<label>/<video_prefix>/<frame_id>.jpg
+    # if frame_id % 5 == 0: # TODO only 25 frames. Đếm video có n frame, chia đều lấy n/25 frame
+
     
     for ds_name in datasets:
         raw_ds_path = os.path.join(data_raw_dir, dataset_dirs[ds_name])
@@ -47,9 +57,10 @@ def run_preprocessing(data_raw_dir, data_processed_dir):
                 glob.glob(os.path.join(raw_ds_path, "**", "*.png"), recursive=True)
                 
         for i, filepath in enumerate(files):
-            # Very Basic Real/Fake logic heuristic based on standard folder names
+             # Very Basic Real/Fake logic heuristic based on standard folder names
             is_real = ("real" in filepath.lower() or "live" in filepath.lower() or 
-                       "client" in filepath.lower() or "1.avi" in filepath.lower() or "2.avi" in filepath.lower() or "hr_1.avi" in filepath.lower())
+                       "client" in filepath.lower() or "1.avi" in filepath.lower() or "2.avi" in filepath.lower() 
+                       or "hr_1.avi" in filepath.lower()) # TODO check this
             
             fp = filepath.lower().replace('\\', '/')
             split = 'test'
@@ -86,7 +97,7 @@ def run_preprocessing(data_raw_dir, data_processed_dir):
                 if not ret: break
                 
                 # Sample every 5 frames for videos
-                if frame_id % 5 == 0:
+                if frame_id % 5 == 0: # TODO only 25 frames. Đếm video có n frame, chia đều lấy n/25 frame
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
                     try:

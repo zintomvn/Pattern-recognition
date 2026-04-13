@@ -9,6 +9,7 @@ import random
 from collections import OrderedDict
 
 import torch
+import torch.cuda.amp as amp
 import torch.nn.functional as F
 
 sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', '..'))
@@ -46,6 +47,13 @@ class ANRLTask(BaseTask):
         """
         super(ANRLTask, self)._distribute_model(broadcast_buffers=False)
 
+    @property
+    def feat_extractor(self):
+        """Access FeatExtractor whether model is DDP-wrapped or not."""
+        if hasattr(self.model, 'module'):
+            return self.feat_extractor
+        return self.model.FeatExtractor
+
     def _build_losses(self, **kwargs):
         self.criterion = losses.__dict__[self.cfg.loss.name](**self.cfg.loss.params).to(self.device)
         self.criterion_2 = losses.__dict__[self.cfg.loss_2.name](**self.cfg.loss_2.params).to(self.device)
@@ -65,8 +73,15 @@ class ANRLTask(BaseTask):
                 self.dg_train_pos.sampler.set_epoch(epoch)
                 self.dg_train_neg.sampler.set_epoch(epoch)
 
-            self.train(epoch)
+            # AMP: wrap train() in autocast; scaler is set by base_task.prepare()
+            if getattr(self, 'scaler', None) and self.scaler.is_enabled():
+                with amp.autocast():
+                    self.train(epoch, scaler=self.scaler)
+            else:
+                self.train(epoch, scaler=None)
             self.validate(epoch)
+            if self.cfg.local_rank == 0 and not getattr(self.cfg, 'test_only', False):
+                self._save_periodic_checkpoint(epoch, monitor_metric='AUC')
             if hasattr(self, 'scheduler') and self.scheduler is not None:
                 self.scheduler.step(epoch)
 
@@ -134,7 +149,7 @@ class ANRLTask(BaseTask):
         meta_test_neg_img = meta_test_neg_img.reshape(-1, C, H, W)
         meta_test_neg_label = meta_test_neg_label.reshape(-1).long()
 
-        meta_train_images = torch.cat((meta_train_pos_img, meta_train_neg_img), 0)
+        meta_train_images = torch.cat((meta_train_pos_img, meta_train_neg_img), 0) # 2 x B*N x C x H x W
         meta_train_targets = torch.cat((meta_train_pos_label, meta_train_neg_label), 0)
 
         meta_test_images = torch.cat((meta_test_pos_img, meta_test_neg_img), 0)
@@ -170,7 +185,8 @@ class ANRLTask(BaseTask):
         loss_1 = self.criterion(output, domain_meta_targets)
         loss_2 = self.criterion_2(depth.squeeze(), domain_meta_depth)
 
-        feat_real = feat[:num_real]
+        # TODO Center update?? 0.9??
+        feat_real = feat[:num_real] 
         feat_pool_real = F.adaptive_avg_pool2d(feat_real, 1).reshape((feat_real.shape[0], -1))
         center_real[index] = center_real[index] * 0.9 + feat_pool_real.mean(dim=0).detach() * 0.1
 
@@ -195,7 +211,7 @@ class ANRLTask(BaseTask):
 
         return loss_1, loss_2, loss_domain, loss_discri
 
-    def train(self, epoch):
+    def train(self, epoch, scaler=None):
         # define the metric recoders
         train_acces = AverageMeter('Meta_train_Acc', ':.5f')
         train_losses = AverageMeter('Meta_train_Class', ':.5f')
@@ -218,10 +234,13 @@ class ANRLTask(BaseTask):
         self.model.train()
 
         # to initialize the centor
-        center_real = torch.ones(2, 384).to(self.device)
-        center_fake = torch.ones(2, 384).to(self.device)
+        center_real = torch.ones(3, 384).to(self.device)
+        center_fake = torch.ones(3, 384).to(self.device)
 
         for i, (datas_pos, datas_neg) in enumerate(zip(self.dg_train_pos, self.dg_train_neg)):
+            # TODO Clear GPU memory cache to avoid fragmentation build-up 
+            torch.cuda.empty_cache()
+
             # generate the meta_train and meta_test index
             domain_list = list(range(datas_pos[0].shape[1]))
             random.shuffle(domain_list)
@@ -254,7 +273,8 @@ class ANRLTask(BaseTask):
                 domain_meta_train_targets = meta_train_targets[domain_select].to(self.device)
                 domain_meta_train_depth = meta_train_depth[domain_select].to(self.device)
 
-                prediction, output, depth, feat = self._model_forward(domain_meta_train_images)
+                with amp.autocast():
+                    prediction, output, depth, feat = self._model_forward(domain_meta_train_images)
 
                 # generate the results
                 index = meta_train_list[j]
@@ -274,7 +294,7 @@ class ANRLTask(BaseTask):
                         loss_discri * self.cfg.loss_3.discri_weight
 
             # the accuracy of current batch
-            acc = (prediction == domain_meta_train_targets).float().mean()
+            acc = (prediction == domain_meta_train_targets).to(torch.float32).mean()
 
             # update the metrics
             if self.cfg.distributed:
@@ -293,7 +313,7 @@ class ANRLTask(BaseTask):
             # ============ update the meta parameter ============= #
             attention_parameters_extor = []
             # store the original parameters which need updated via meta-learning
-            for k, v in self.model.module.FeatExtractor.named_parameters():
+            for k, v in self.feat_extractor.named_parameters():
                 if 'AttentionNet' in k:
                     if v.grad is not None:
                         v.grad.zero_()
@@ -301,14 +321,15 @@ class ANRLTask(BaseTask):
 
             attention_parameters = attention_parameters_extor
 
-            # calculate the gradients
-            grads_AttentionNet = torch.autograd.grad(train_loss,
-                                                     attention_parameters,
-                                                     create_graph=True,
-                                                     allow_unused=True)
+            # calculate the gradients (meta-learning inner loop — grad computation only, no param update)
+            with amp.autocast():
+                grads_AttentionNet = torch.autograd.grad(train_loss,
+                                                         attention_parameters,
+                                                         create_graph=True,
+                                                         allow_unused=True)
 
             fast_weights_AttentionNet_extor = {}
-            for k, v in self.model.module.FeatExtractor.state_dict().items():
+            for k, v in self.feat_extractor.state_dict().items():
                 if 'AttentionNet' in k:
                     fast_weights_AttentionNet_extor[k] = v
 
@@ -334,8 +355,9 @@ class ANRLTask(BaseTask):
                 domain_meta_test_targets = meta_test_targets[domain_select].to(self.device)
                 domain_meta_test_depth = meta_test_depth[domain_select].to(self.device)
 
-                prediction, output, depth, feat = self._model_forward(domain_meta_test_images,
-                                                                      fast_weights_AttentionNet_extor)
+                with amp.autocast():
+                    prediction, output, depth, feat = self._model_forward(domain_meta_test_images,
+                                                                          fast_weights_AttentionNet_extor)
 
                 # generate the results
                 index = meta_test_list[j]
@@ -348,7 +370,7 @@ class ANRLTask(BaseTask):
                 loss_domain += sub_loss_domain
                 loss_discri += sub_loss_discri
 
-                acc = (prediction == domain_meta_test_targets).float().mean()
+                acc = (prediction == domain_meta_test_targets).to(torch.float32).mean()
 
                 if self.cfg.distributed:
                     test_acces.update(reduce_tensor(acc.data).item(), domain_meta_test_targets.size(0))
@@ -374,8 +396,13 @@ class ANRLTask(BaseTask):
 
             # update the loss
             self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+                scaler.step(self.optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
 
             if self.cfg.local_rank == 0:
                 if i % self.cfg.train.print_interval == 0:
@@ -399,10 +426,11 @@ class ANRLTask(BaseTask):
                 step=epoch)
 
     def validate(self, epoch):
-        y_preds, y_trues = test_module(self.model, [self.dg_val_pos, self.dg_val_neg],
-                                       self._model_forward,
-                                       distributed=not getattr(self.cfg, 'test_only', False),
-                                       device=str(self.device))
+        y_preds, y_trues, val_loss = test_module(self.model, [self.dg_val_pos, self.dg_val_neg],
+                                                self._model_forward,
+                                                distributed=not getattr(self.cfg, 'test_only', False),
+                                                device=str(self.device),
+                                                compute_loss=True)
 
         # calculate the metrics
         metrics = self._evaluate(y_preds, y_trues, threshold='auto')
@@ -413,12 +441,16 @@ class ANRLTask(BaseTask):
                 self._save_checkpoints(metrics, epoch, monitor_metric='AUC')
             self._log_data(metrics, epoch, prefix='val')
 
+            # log validation loss to wandb
+            if not getattr(self.cfg, 'test_only', False):
+                wandb.log({'Val_Loss': val_loss})
+
     def test(self):
         ckpt_path = f'{self.cfg.exam_dir}/ckpts/model_best.pth.tar'
         if not os.path.exists(ckpt_path):
             self.logger.warning(f'No checkpoint found at {ckpt_path} — skipping test (run training first).')
             return
-        checkpoint = torch.load(ckpt_path, weights_only=True)
+        checkpoint = torch.load(ckpt_path, weights_only=False)
 
         try:
             state_dict = {'module.' + k: w for k, w in checkpoint['state_dict'].items()}
@@ -441,6 +473,13 @@ def main():
     ANRL_task.prepare()
     ANRL_task.fit()
 
-
+import omegaconf
 if __name__ == '__main__':
+    # Allow the entire set of OmegaConf internal types
+    torch.serialization.add_safe_globals([
+        omegaconf.dictconfig.DictConfig,
+        omegaconf.listconfig.ListConfig,
+        omegaconf.base.ContainerMetadata,
+        omegaconf.base.Node,
+    ])
     main()

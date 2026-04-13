@@ -21,6 +21,8 @@ def get_parameters():
     parser.add_argument('--debug', action='store_true', default=False)
     parser.add_argument('--test', action='store_true', default=False,
                         help='Run test-only mode on CPU (skip training, load best checkpoint)')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume training from')
     args = parser.parse_args()
 
     _C = OmegaConf.load(args.config)
@@ -30,6 +32,12 @@ def get_parameters():
     _C.merge_with(vars(args))
     _C.test = yaml_test          # restore YAML test: section
     _C.test_only = args.test     # store CLI flag under a different key
+
+    # Map CLI --resume to config path used by _resume_model
+    if args.resume is not None:
+        if not hasattr(_C, 'model'):
+            _C.model = OmegaConf.create({})
+        _C.model.resume = args.resume
 
     if _C.debug:
         _C.train.epochs = 2

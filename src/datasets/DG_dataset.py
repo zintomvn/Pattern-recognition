@@ -118,14 +118,19 @@ class DG_Dataset(Dataset):
         return new_img_path, new_label, new_img, new_depth, new_res
 
     def _convert_to_depth(self, img_path):
-        if 'replayattack' in img_path: # TODO final dataset
+        if 'replayattack' in img_path:
             depth_path = img_path.replace('replayattack', 'replayattack_depth')
-        elif 'CASIA_database' in img_path:
-            depth_path = img_path.replace('CASIA_database', 'CASIA_database_depth')
+        elif 'CASIA' in img_path:
+            depth_path = img_path.replace('CASIA', 'CASIA_depth')
         elif 'MSU-MFSD' in img_path:
             depth_path = img_path.replace('MSU-MFSD', 'MSU-MFSD_depth')
         elif 'NUAA' in img_path:
             depth_path = img_path.replace('NUAA', 'NUAA_depth')
+        else:
+            raise FileNotFoundError(
+                f"No depth mapping for img_path:\n  {img_path}\n"
+                "  Add a new elif branch in _convert_to_depth() for this dataset."
+            )
 
         return depth_path
 
@@ -154,6 +159,14 @@ class DG_Dataset(Dataset):
         else:
             img = cv2.imread(img_path)
             depth = cv2.imread(depth_path, cv2.IMREAD_GRAYSCALE)
+
+        if depth is None:
+            raise FileNotFoundError(
+                f"Depth image not found or unreadable (label={label}, label==0 means real):\n"
+                f"  {depth_path}\n"
+                f"  Image: {img_path}\n"
+                "  Check that depth files exist at the converted path above."
+            )
 
         if not label == 0:
             depth = np.zeros((depth.shape[0], depth.shape[1]))

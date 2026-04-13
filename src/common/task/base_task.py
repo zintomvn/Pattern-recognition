@@ -1,3 +1,4 @@
+import glob
 import os
 import sys
 import importlib
@@ -5,6 +6,7 @@ import wandb
 import loguru
 
 import torch
+import torch.cuda.amp as amp
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
@@ -97,6 +99,10 @@ class BaseTask(object):
         self.optimizer = optimizers.__dict__[self.cfg.optimizer.name](self.model.parameters(),
                                                                       **self.cfg.optimizer.params)
 
+        # AMP: GradScaler — enabled only on CUDA with cfg.amp.enabled=true
+        amp_enabled = torch.cuda.is_available() and self.cfg.get('amp', {}).get('enabled', False)
+        self.scaler = amp.GradScaler(enabled=amp_enabled)
+
     def _build_schedulers(self, **kwargs):
         self.scheduler = schedulers.__dict__[self.cfg.scheduler.name](self.optimizer, **self.cfg.scheduler.params)
 
@@ -155,6 +161,35 @@ class BaseTask(object):
         last_lr = [group['lr'] for group in self.scheduler.optimizer.param_groups][0]
         self.logger.info(f'Best_{monitor_metric}: {100 * best_metric:.4f} (Epoch-{best_epoch})')
         self.logger.info(f'learning rate: {last_lr}')
+
+    def _save_periodic_checkpoint(self, epoch, monitor_metric='ACC', **kwargs):
+        """Save a periodic checkpoint (every epoch) to Google Drive for Colab persistence.
+        Keeps the latest 5 periodic checkpoints (rolling window).
+        """
+        if self.cfg.local_rank == 0 and hasattr(self, 'saver') and self.saver is not None:
+            ckpt_dir = f'{self.cfg.exam_dir}/ckpts'
+            os.makedirs(ckpt_dir, exist_ok=True)
+
+            # Get existing periodic checkpoints and sort by epoch
+            existing = sorted(glob.glob(f'{ckpt_dir}/model_epoch_*.pth.tar'))
+
+            # Keep only latest 5 periodic checkpoints (rolling window)
+            while len(existing) >= 5:
+                oldest = existing.pop(0)
+                if os.path.exists(oldest):
+                    os.remove(oldest)
+                else:
+                    break  # avoid infinite loop if removal failed
+
+            # Save new checkpoint
+            ckpt_name = f'{ckpt_dir}/model_epoch_{epoch}.pth.tar'
+            torch.save({
+                'epoch': epoch,
+                'state_dict': self.model.state_dict(),
+                'optimizer': self.optimizer.state_dict(),
+                'scheduler': self.scheduler.state_dict() if hasattr(self, 'scheduler') else None,
+            }, ckpt_name)
+            self.logger.info(f'Periodic checkpoint saved: {ckpt_name}')
 
     def _log_data(self, data, epoch=0, prefix='val', **kwargs):
         """ display data and running status
