@@ -11,7 +11,6 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as NativeDDP
 
 from timm.utils import CheckpointSaver
-from timm.models import resume_checkpoint
 
 sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..'))
 
@@ -115,10 +114,31 @@ class BaseTask(object):
         """ load pretrain model ckpt if training mode is finetuning
         """
         self.start_epoch = 1
+        self.resume_batch_idx = None  # for resuming mid-epoch
         if self.cfg.model.resume is not None:
-            self.start_epoch = resume_checkpoint(self.model, self.cfg.model.resume, self.optimizer)
+            ckpt_path = self.cfg.model.resume
+            if not os.path.exists(ckpt_path):
+                if self.cfg.local_rank == 0:
+                    self.logger.warning(f'Checkpoint not found: {ckpt_path} — starting from scratch')
+                return
+
+            # Load full checkpoint dict to restore epoch + batch_idx + scheduler
+            ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+            self.model.load_state_dict(ckpt['state_dict'], strict=False)
+            if 'optimizer' in ckpt and self.optimizer is not None:
+                self.optimizer.load_state_dict(ckpt['optimizer'])
+            if 'scheduler' in ckpt and self.scheduler is not None and ckpt['scheduler'] is not None:
+                self.scheduler.load_state_dict(ckpt['scheduler'])
+
+            self.start_epoch = ckpt.get('epoch', 1)
+            self.resume_batch_idx = ckpt.get('batch_idx', None)
+
             if self.cfg.local_rank == 0:
-                self.logger.info(f'resume model from {self.cfg.model.resume}')
+                info = f'resume model from {ckpt_path} (epoch={self.start_epoch}'
+                if self.resume_batch_idx is not None:
+                    info += f', batch_idx={self.resume_batch_idx}'
+                info += ')'
+                self.logger.info(info)
 
     def _build_saver(self, **kwargs):
         """ build checkpoint saver
@@ -162,15 +182,15 @@ class BaseTask(object):
         self.logger.info(f'Best_{monitor_metric}: {100 * best_metric:.4f} (Epoch-{best_epoch})')
         self.logger.info(f'learning rate: {last_lr}')
 
-    def _save_periodic_checkpoint(self, epoch, monitor_metric='ACC', **kwargs):
-        """Save a periodic checkpoint (every epoch) to Google Drive for Colab persistence.
+    def _save_periodic_checkpoint(self, epoch, batch_idx=None, monitor_metric='ACC', **kwargs):
+        """Save a periodic checkpoint.
         Keeps the latest 5 periodic checkpoints (rolling window).
         """
         if self.cfg.local_rank == 0 and hasattr(self, 'saver') and self.saver is not None:
             ckpt_dir = f'{self.cfg.exam_dir}/ckpts'
             os.makedirs(ckpt_dir, exist_ok=True)
 
-            # Get existing periodic checkpoints and sort by epoch
+            # Get existing periodic checkpoints (both epoch-level and interval-level)
             existing = sorted(glob.glob(f'{ckpt_dir}/model_epoch_*.pth.tar'))
 
             # Keep only latest 5 periodic checkpoints (rolling window)
@@ -182,9 +202,14 @@ class BaseTask(object):
                     break  # avoid infinite loop if removal failed
 
             # Save new checkpoint
-            ckpt_name = f'{ckpt_dir}/model_epoch_{epoch}.pth.tar'
+            if batch_idx is not None:
+                ckpt_name = f'{ckpt_dir}/model_epoch_{epoch}_batch_{batch_idx}.pth.tar'
+            else:
+                ckpt_name = f'{ckpt_dir}/model_epoch_{epoch}.pth.tar'
             torch.save({
                 'epoch': epoch,
+                'batch_idx': batch_idx,
+                'monitor_metric': monitor_metric,
                 'state_dict': self.model.state_dict(),
                 'optimizer': self.optimizer.state_dict(),
                 'scheduler': self.scheduler.state_dict() if hasattr(self, 'scheduler') else None,

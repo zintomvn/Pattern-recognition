@@ -81,7 +81,7 @@ class ANRLTask(BaseTask):
                 self.train(epoch, scaler=None)
             self.validate(epoch)
             if self.cfg.local_rank == 0 and not getattr(self.cfg, 'test_only', False):
-                self._save_periodic_checkpoint(epoch, monitor_metric='AUC')
+                self._save_periodic_checkpoint(epoch)
             if hasattr(self, 'scheduler') and self.scheduler is not None:
                 self.scheduler.step(epoch)
 
@@ -238,7 +238,14 @@ class ANRLTask(BaseTask):
         center_fake = torch.ones(3, 384).to(self.device)
 
         for i, (datas_pos, datas_neg) in enumerate(zip(self.dg_train_pos, self.dg_train_neg)):
-            # TODO Clear GPU memory cache to avoid fragmentation build-up 
+            # Skip batches if resuming mid-epoch
+            if epoch == self.start_epoch and hasattr(self, 'resume_batch_idx') and self.resume_batch_idx is not None:
+                if i < self.resume_batch_idx:
+                    continue
+                else:
+                    self.resume_batch_idx = None  # only skip once
+
+            # TODO Clear GPU memory cache to avoid fragmentation build-up
             torch.cuda.empty_cache()
 
             # generate the meta_train and meta_test index
@@ -394,19 +401,35 @@ class ANRLTask(BaseTask):
             # all the loss
             loss = train_loss + test_loss
 
-            # update the loss
-            self.optimizer.zero_grad()
+            # gradient accumulation: step only every accumulation_steps iterations
+            accum_steps = self.cfg.train.get('accumulation_steps', 1)
+            if not hasattr(self, 'accum_step'):
+                self.accum_step = 0
+
+            self.optimizer.zero_grad(set_to_none=True)
             if scaler is not None:
                 scaler.scale(loss).backward()
-                scaler.step(self.optimizer)
-                scaler.update()
+                if (i + 1) % accum_steps == 0:
+                    scaler.step(self.optimizer)
+                    scaler.update()
+                    self.accum_step = 0
+                else:
+                    self.accum_step += 1
             else:
                 loss.backward()
-                self.optimizer.step()
+                if (i + 1) % accum_steps == 0:
+                    self.optimizer.step()
+                    self.accum_step = 0
+                else:
+                    self.accum_step += 1
 
             if self.cfg.local_rank == 0:
                 if i % self.cfg.train.print_interval == 0:
                     self.logger.info(progress.display(i))
+
+                if i % (3*self.cfg.train.print_interval) == 0:
+                    # Save periodic checkpoint after each print_interval
+                    self._save_periodic_checkpoint(epoch, batch_idx=i)
 
         # record the results via wandb (skip in --test mode where wandb is not initialized)
         if self.cfg.local_rank == 0 and not getattr(self.cfg, 'test_only', False):
@@ -446,7 +469,9 @@ class ANRLTask(BaseTask):
                 wandb.log({'Val_Loss': val_loss})
 
     def test(self):
-        ckpt_path = f'{self.cfg.exam_dir}/ckpts/model_best.pth.tar'
+        # Respect --resume CLI arg for local checkpoint; fall back to model_best.pth.tar
+        ckpt_path = self.cfg.model.resume if self.cfg.model.resume else \
+            f'{self.cfg.exam_dir}/ckpts/model_best.pth.tar'
         if not os.path.exists(ckpt_path):
             self.logger.warning(f'No checkpoint found at {ckpt_path} — skipping test (run training first).')
             return
