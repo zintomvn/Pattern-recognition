@@ -51,7 +51,11 @@ def gather_tensor(inp, world_size=None, dist_=True, to_numpy=False):
         # Wrap in list so torch.stack / cat always work on a consistent type.
         inp = list(inp)
         if to_numpy:
-            gather_inp = inp  # already numpy
+            # Must move CUDA tensor to CPU before converting to numpy
+            inp = [x.cpu().numpy() if isinstance(x, torch.Tensor) and x.is_cuda else
+                   x.cpu().numpy() if isinstance(x, torch.Tensor) else
+                   x for x in inp]
+            gather_inp = inp
         else:
             gather_inp = torch.stack(inp) if len(inp) > 1 else inp[0]
 

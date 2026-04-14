@@ -45,8 +45,15 @@ def cal_metrics(y_trues, y_preds, threshold=0.5):
     fpr, tpr, thresholds = roc_curve(y_trues, y_preds)
     metrics.AUC = auc(fpr, tpr)
 
-    metrics.EER = brentq(lambda x: 1. - x - interp1d(fpr, tpr)(x), 0., 1.)
-    metrics.Thre = float(interp1d(fpr, thresholds)(metrics.EER))
+    try:
+        # Guard against degenerate ROC curves (e.g., all preds identical → NaN at boundaries)
+        interp_tpr = interp1d(fpr, tpr, kind='linear', fill_value='extrapolate')
+        metrics.EER = brentq(lambda x: 1. - x - interp_tpr(x), 0., 1.)
+        metrics.Thre = float(interp1d(fpr, thresholds)(metrics.EER))
+    except ValueError:
+        # Fallback: use threshold=0.5 when EER cannot be computed
+        metrics.EER = float('nan')
+        metrics.Thre = 0.5
 
     if threshold == 'best':
         _, best_metrics = find_best_threshold(y_trues, y_preds)
@@ -58,15 +65,33 @@ def cal_metrics(y_trues, y_preds, threshold=0.5):
     prediction = (np.array(y_preds) > threshold).astype(int)
 
     res = confusion_matrix(y_trues, prediction, labels=[0, 1])
-    TP, FN = res[0, :]
-    FP, TN = res[1, :]
-    metrics.ACC = (TP + TN) / len(y_trues)
+    # Guard against single-class cases (matrix may be 1x1 or 1x2)
+    if res.shape == (1, 1):
+        if y_trues[0] == 0:
+            TP, FN = res[0, 0], 0
+            FP, TN = 0, 0
+        else:
+            TP, FN = 0, 0
+            FP, TN = 0, res[0, 0]
+    elif res.shape == (1, 2):
+        TP, FN = res[0, 0], res[0, 1]
+        FP, TN = 0, 0
+    elif res.shape == (2, 2):
+        TP, FN = res[0, 0], res[0, 1]
+        FP, TN = res[1, 0], res[1, 1]
+    else:
+        raise RuntimeError(f"Unexpected confusion_matrix shape: {res.shape}")
 
-    TP_rate = float(TP / (TP + FN))
-    TN_rate = float(TN / (TN + FP))
+    total = TP + TN + FP + FN
+    metrics.ACC = (TP + TN) / total if total > 0 else 0.0
 
-    metrics.APCER = float(FP / (TN + FP))
-    metrics.BPCER = float(FN / (FN + TP))
+    TP_rate = float(TP / (TP + FN)) if (TP + FN) > 0 else 0.0
+    TN_rate = float(TN / (TN + FP)) if (TN + FP) > 0 else 0.0
+
+    denom_apcer = TN + FP
+    denom_bpcer = FN + TP
+    metrics.APCER = float(FP / denom_apcer) if denom_apcer > 0 else 0.0
+    metrics.BPCER = float(FN / denom_bpcer) if denom_bpcer > 0 else 0.0
     metrics.ACER = (metrics.APCER + metrics.BPCER) / 2
 
     return metrics
