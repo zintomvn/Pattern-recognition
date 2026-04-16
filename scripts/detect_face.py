@@ -5,54 +5,77 @@ from insightface.app import FaceAnalysis
 import os
 from concurrent.futures.thread import ThreadPoolExecutor
 
+# Initialization
+app = FaceAnalysis(name='buffalo_s', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+app.prepare(ctx_id=0, det_size=(256, 256))
+delta = 20  # expand 20 pixels around bbox
 
-# pip install insightface
-# default model from: https://drive.google.com/file/d/1pKIusApEfoHKDjeBTXYB3yOQ0EtTonNE/view?usp=sharing
-# load buffalo_s model, 159MB
+def crop_face_func(img_full_path, output_path):
+    """Detects first face, expands bbox, crops, and saves to output_path."""
+    img = cv2.imread(img_full_path)
+    if img is None:
+        print(f"Error: Could not read {img_full_path}")
+        return
+        
+    height, width, _ = img.shape
+   
 
+    try:
+        faces = app.get(img)
+        if not faces:
+            print(f"No face detected in: {img_full_path}")
+            return
+
+        if height < 300 and width < 300:
+            print(f"Skipping small image: {img_full_path} ({width}x{height})")
+            crop_face = img
+        else:
+            bbox = faces[0]['bbox']
+            point1 = [int(bbox[0]), int(bbox[1])]
+            point2 = [int(bbox[2]), int(bbox[3])]
+
+            # Expand bbox
+            point_1 = [max(0, point1[0] - delta), max(0, point1[1] - delta)]
+            point_2 = [min(point2[0] + delta, width), min(point2[1] + delta, height)]
+            
+            crop_face = img[point_1[1]:point_2[1], point_1[0]:point_2[0], :]
+
+        # Ensure output directory exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        cv2.imwrite(output_path, crop_face)
+        print(f"Processed: {os.path.basename(img_full_path)}")
+    except Exception as e:
+        print(f"Error processing {img_full_path}: {e}")
+
+def process_recursively(input_root, output_root, executor):
+    """Recursively traverses input_root and submits tasks to executor."""
+    supported_exts = ('.jpg', '.png', '.jpeg')
+    cnt = 0
+    
+    for root, dirs, files in os.walk(input_root):
+        for file in files:
+            if file.lower().endswith(supported_exts):
+                input_path = os.path.join(root, file)
+                
+                # Maintain relative structure
+                rel_path = os.path.relpath(input_path, input_root)
+                output_path = os.path.join(output_root, rel_path)
+                
+                cnt += 1
+                executor.submit(crop_face_func, input_path, output_path)
+    
+    print(f"Submitted {cnt} images for processing.")
 
 if __name__ == '__main__':
-    executor = ThreadPoolExecutor(max_workers=32)
-    base_path = "xxx"
+    # Configuration
+    INPUT_DIR = "data/raw/CelebASpoof"
+    OUTPUT_DIR = "data/processed/CelebASpoof"
+    MAX_WORKERS = 32
 
-    app = FaceAnalysis(name='buffalo_s',providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-    app.prepare(ctx_id=0, det_size=(256, 256))
-    delta = 20  # expand 20 pixel
-    protocols = ['p1', 'p2.1', 'p2.2']
+    if not os.path.exists(INPUT_DIR):
+        print(f"Error: Input directory {INPUT_DIR} does not exist.")
+    else:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            process_recursively(INPUT_DIR, OUTPUT_DIR, executor)
 
-    def crop_face_func(img_full_path):
-        img = cv2.imread(img_full_path)
-        height, width, _ = img.shape
-        if height >= 257 and width >= 257:
-            try:
-                faces = app.get(img)
-                bbox = faces[0]['bbox']
-                point1 = [int(bbox[0]), int(bbox[1])]
-                point2 = [int(bbox[2]), int(bbox[3])]
-
-                point_1 = [max(0, point1[0] - delta), max(0, point1[1] - delta)]
-                point_2 = [min(point2[0] + delta, width), min(point2[1] + delta, height)]
-                crop_face = img[point_1[1]:point_2[1], point_1[0]:point_2[0], :]
-
-                # crop_face overwrites the original image
-                cv2.imwrite(f"{img_full_path}", crop_face)
-                print("crop face")
-            except:
-                print("no face")
-
-    # Preprocess files in CelebASpoof list,  save to data/preprocessed
-    crop_face_func('/home/nesfan/Desktop/HCMUS/Nam3/HK2/NhanDang/Pattern-recognition/data/testing/496397.png')
-    # for protocol in protocols:
-    #     all_data = []
-    #     train_lines = open(f'{base_path}/cvpr2024/data/{protocol}/train_label.txt', 'r').readlines()
-    #     dev_test_lines = open(f'{base_path}/cvpr2024/data/{protocol}/dev_test.txt', 'r').readlines()
-    #     all_data = train_lines + dev_test_lines
-
-    #     cnt = 0
-    #     for line in all_data:
-    #         split_arr = line.strip().split()
-    #         cnt += 1
-    #         print(f"cnt: {cnt}")
-    #         img_path = split_arr[0]
-    #         img_full_path = os.path.join(base_path, "cvpr2024/data", img_path)
-    #         executor.submit(crop_face_func, img_full_path)
+    print("Finished submitting all tasks.")

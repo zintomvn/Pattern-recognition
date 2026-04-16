@@ -36,8 +36,9 @@ def test_module(model, test_data_loaders, forward_function, device='cuda', distr
     crit = torch.nn.CrossEntropyLoss() if compute_loss else None
 
     model.eval()
-    for loaders in test_data_loaders:
-        for iter, datas in enumerate(tqdm(loaders)):
+    num_iters = min(len(loaders) for loaders in test_data_loaders)
+    for iter, all_datas in enumerate(zip(*test_data_loaders)):
+        for datas in all_datas:
             with torch.no_grad():
                 images = datas[0].to(device)
                 targets = datas[1].to(device)

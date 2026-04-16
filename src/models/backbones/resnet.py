@@ -53,7 +53,7 @@ class _ResNetBackbone(BackboneBase):
     RESNET_FN = None   # e.g. resnet18
     FEAT_CH    = None   # e.g. 512 for ResNet18
 
-    def __init__(self, in_ch=6, mid_ch=384, pretrained=True):
+    def __init__(self, in_ch=6, mid_ch=384, pretrained=True, **kwargs):
         super().__init__(in_ch=in_ch, mid_ch=mid_ch)
         self.pretrained = pretrained
         self._build_body()

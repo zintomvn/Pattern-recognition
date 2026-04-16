@@ -9,6 +9,28 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 from torchvision import transforms as tv_transforms
 from PIL import Image
+import albumentations as A
+
+class ColorTrans(object):
+    """Transpose the image color space from RGB to BGR or reverse.
+    Args:
+        mode (int): 0 for BGR to RGB, 1 for RGB to BGR.
+    """
+    def __init__(self, mode=0):
+        self.mode = mode
+
+    def __call__(self, tensor):
+        if isinstance(tensor, Image.Image):
+            tensor = np.array(tensor)
+        if self.mode == 0 and tensor.shape[2] == 3:
+            return cv2.cvtColor(tensor, cv2.COLOR_BGR2RGB)
+        elif self.mode == 1 and tensor.shape[2] == 3:
+            return cv2.cvtColor(tensor, cv2.COLOR_RGB2BGR)
+        else:
+            raise ValueError("Input should be a 3 channel image.")
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(mode={0})'.format(self.mode)
 
 sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', '..', '..'))
 
@@ -68,6 +90,18 @@ class DG_Dataset(Dataset):
         self.color_jitter = tv_transforms.ColorJitter(
             brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4
         )
+        self.input_size = getattr(self, 'input_size', 256)
+        
+        # Additional augmentations (gated)
+        self.t1 = tv_transforms.Compose([
+            tv_transforms.RandomResizedCrop(size=self.input_size, 
+                                          scale=(0.75, 1.0), 
+                                          ratio=(3.0/4.0, 4.0/3.0)),
+            ColorTrans(mode=0), # BGR to RGB
+        ])
+        self.t2 = A.Compose([
+            A.HorizontalFlip(p=0.5),
+        ])
 
         if self.split == 'train' and self.category == 'pos':
             self.items_1 = open(self.train_pos_list1_path).read().splitlines()
@@ -182,20 +216,33 @@ class DG_Dataset(Dataset):
         if not label == 0:
             depth = np.zeros((depth.shape[0], depth.shape[1]))
 
-        # Moire + ColorJitter augmentation — only on selected domains, 10% prob
+        # Moire + ColorJitter augmentation — only on selected domains, with prob
         if self.split == 'train' and label == 0:
             domain = None
             for d in ['CASIA', 'MSU-MFSD', 'NUAA', 'replayattack']:
                 if d in img_path:
                     domain = d
                     break
-            if domain and domain in self.augment_datasets and random.random() < 0.1:
-                img = self.moire(img)
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                img_pil = Image.fromarray(img_rgb)
-                img_pil = self.color_jitter(img_pil)
-                img = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
-                label = 1
+            prob_value = random.random()
+            if domain and domain in self.augment_datasets and prob_value < 0.6:
+                if prob_value < 0.3:
+                    img = self.moire(img)
+                    label = 1
+                else: # 0.3 <= prob_value < 0.6
+                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    img_pil = Image.fromarray(img_rgb)
+                    transformed_image_pil = self.color_jitter(img_pil)
+                    img = cv2.cvtColor(np.array(transformed_image_pil), cv2.COLOR_RGB2BGR)
+                    label = 1
+                
+                # Final stages: t1 and t2 (only on augmented samples)
+                img_pilot = Image.fromarray(img) # Treat as BGR-in-RGB-memory for ColorTrans
+                img_rgb = self.t1(img_pilot)
+                augmented_dict = self.t2(image=img_rgb)
+                img_final_rgb = augmented_dict['image']
+                
+                # Convert back to BGR to maintain consistency with the rest of the pipeline
+                img = cv2.cvtColor(img_final_rgb, cv2.COLOR_RGB2BGR)
 
         if getattr(self, 'crop_face_from_5points', None):
             x1, x2, y1, y2 = get_face_box(img, res, margin=self.margin)

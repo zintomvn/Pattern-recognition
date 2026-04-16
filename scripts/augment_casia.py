@@ -9,8 +9,9 @@ from torchvision import transforms as tv_transforms
 import albumentations as A
 
 # Constants
-META_LIST_PATH = "data/processed/meta_lists/CASIA_train_pos.txt"
-OUTPUT_DIR_BASE = "data/processed/CASIA/train/spoof"
+DATASET = "CASIA" # Change this for other datasets (e.g., CelebASpoof)
+META_LIST_PATH = f"data/processed/meta_lists/{DATASET}_train_pos.txt"
+OUTPUT_DIR_BASE = f"data/processed/{DATASET}/train/spoof"
 FILE_LIMIT = 100
 INPUT_SIZE = 256
 
@@ -88,8 +89,8 @@ def resolve_path(relative_path):
     clean_path = relative_path.lstrip('./').lstrip('../')
     if os.path.exists(clean_path):
         return clean_path
-    if "CASIA/" in clean_path:
-        db_path = clean_path.replace("CASIA/", "CASIA_database/")
+    if f"{DATASET}/" in clean_path:
+        db_path = clean_path.replace(f"{DATASET}/", f"{DATASET}_database/")
         if os.path.exists(db_path):
             return db_path
     return None

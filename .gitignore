@@ -37,3 +37,5 @@ outputs/
 checkpoints/
 wandb/
 PRNet/Data/net-data
+PRNet/output
+PRNet/TestImages
