@@ -3,13 +3,17 @@ import sys
 import cv2
 import lmdb
 import numpy as np
+import random
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
+from torchvision import transforms as tv_transforms
+from PIL import Image
 
 sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', '..', '..'))
 
 from common.utils import add_face_margin, get_face_box
+from extensions.simulate.moire import Moire
 
 
 class DG_Dataset(Dataset):
@@ -17,13 +21,13 @@ class DG_Dataset(Dataset):
         DG_Dataset contain three datasets and preprocess images of three different domains
         Args:
             data_root (str): the path of LMDB_database
-            split (str): 
-                'train': generate the datasets for training 
+            split (str):
+                'train': generate the datasets for training
                 'val': generate the datasets for validation
                 'test': generate the datasets for testing
             catgory (str):
                 'pos': generate the datasets of real images
-                'neg': generate the datasets of fake images 
+                'neg': generate the datasets of fake images
                 '': gnereate the datasets
             transform: the transforms for preprocessing
             img_mode (str):
@@ -57,6 +61,13 @@ class DG_Dataset(Dataset):
             self.data = self.env.begin(write=False)
             if print_info:
                 print(self.data.id())
+
+        # moire + ColorJitter augmentation (per-domain gating via augment_datasets)
+        self.augment_datasets = getattr(self, 'augment_datasets', [])
+        self.moire = Moire()
+        self.color_jitter = tv_transforms.ColorJitter(
+            brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4
+        )
 
         if self.split == 'train' and self.category == 'pos':
             self.items_1 = open(self.train_pos_list1_path).read().splitlines()
@@ -106,7 +117,7 @@ class DG_Dataset(Dataset):
                 img_buf = np.frombuffer(img_bin, dtype=np.uint8)
                 depth_buf = np.frombuffer(depth_bin, dtype=np.uint8)
                 new_img = cv2.imdecode(img_buf, cv2.IMREAD_COLOR)
-                new_depth = cv2.imdecode(depth_buf, cv2.IMREAD_COLOR)
+                new_depth = cv2.imdecode(depth_buf, cv2.IMREAD_GRAYSCALE)
             except:
                 print('load img_buf error')
                 print(new_img_path)
@@ -170,6 +181,21 @@ class DG_Dataset(Dataset):
 
         if not label == 0:
             depth = np.zeros((depth.shape[0], depth.shape[1]))
+
+        # Moire + ColorJitter augmentation — only on selected domains, 10% prob
+        if self.split == 'train' and label == 0:
+            domain = None
+            for d in ['CASIA', 'MSU-MFSD', 'NUAA', 'replayattack']:
+                if d in img_path:
+                    domain = d
+                    break
+            if domain and domain in self.augment_datasets and random.random() < 0.1:
+                img = self.moire(img)
+                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img_pil = Image.fromarray(img_rgb)
+                img_pil = self.color_jitter(img_pil)
+                img = cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+                label = 1
 
         if getattr(self, 'crop_face_from_5points', None):
             x1, x2, y1, y2 = get_face_box(img, res, margin=self.margin)

@@ -231,6 +231,9 @@ class ANRLTask(BaseTask):
             test_acces, test_losses, test_losses2, test_losses3, test_losses4
         ], prefix=f"Epoch:{epoch} ")
 
+        # gradient accumulation: step only every accumulation_steps iterations
+        accum_steps = self.cfg.train.get('accumulation_steps', 1)
+
         self.model.train()
 
         # to initialize the centor
@@ -401,27 +404,17 @@ class ANRLTask(BaseTask):
             # all the loss
             loss = train_loss + test_loss
 
-            # gradient accumulation: step only every accumulation_steps iterations
-            accum_steps = self.cfg.train.get('accumulation_steps', 1)
-            if not hasattr(self, 'accum_step'):
-                self.accum_step = 0
-
-            self.optimizer.zero_grad(set_to_none=True)
             if scaler is not None:
                 scaler.scale(loss).backward()
                 if (i + 1) % accum_steps == 0:
                     scaler.step(self.optimizer)
                     scaler.update()
-                    self.accum_step = 0
-                else:
-                    self.accum_step += 1
+                    self.optimizer.zero_grad()
             else:
                 loss.backward()
                 if (i + 1) % accum_steps == 0:
                     self.optimizer.step()
-                    self.accum_step = 0
-                else:
-                    self.accum_step += 1
+                    self.optimizer.zero_grad()
 
             if self.cfg.local_rank == 0:
                 if i % self.cfg.train.print_interval == 0:
@@ -430,6 +423,16 @@ class ANRLTask(BaseTask):
                 if i % (3*self.cfg.train.print_interval) == 0:
                     # Save periodic checkpoint after each print_interval
                     self._save_periodic_checkpoint(epoch, batch_idx=i)
+
+        # Final grad not flushed
+        if min(len(self.dg_train_pos), len(self.dg_train_neg)) % accum_steps != 0:
+            if scaler is not None:
+                scaler.step(self.optimizer)
+                scaler.update()
+                self.optimizer.zero_grad()
+            else:
+                self.optimizer.step() 
+                self.optimizer.zero_grad()
 
         # record the results via wandb (skip in --test mode where wandb is not initialized)
         if self.cfg.local_rank == 0 and not getattr(self.cfg, 'test_only', False):

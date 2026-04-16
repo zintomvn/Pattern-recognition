@@ -25,7 +25,8 @@ dataset:
     crop_face_from_5points: False
     margin: 2
     return_path: True
-
+    augment_datasets: []   # e.g. ['CASIA', 'MSU-MFSD'] — empty = no 
+    
 transform:
   image_size: 256
   mean: [0.5, 0.5, 0.5]
@@ -42,6 +43,7 @@ model:
     AdapNorm: True
     AdapNorm_attention_flag: 1layer
     model_initial: kaiming
+    backbone: custom_cnn   # switch here: custom_cnn, resnet18, resnet50, vgg16
 
 loss:
   name: CrossEntropyLoss
@@ -76,8 +78,8 @@ scheduler:
 
 train:
   epochs: 50
-  batch_size: 3
-  accumulation_steps: 3
+  batch_size: 2
+  accumulation_steps: 8
   print_interval: 10
   metasize: 2
   meta_step_size: 0.0001

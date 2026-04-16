@@ -21,3 +21,28 @@
                     (B, 384, 32, 32)
 '''
 from .framework import Framework, FeatEmbedder, FeatExtractor, DepthEstmator
+from .backbones import (
+    BackboneBase,
+    CustomCNNBackbone,
+    ResNet18Backbone,
+    ResNet50Backbone,
+    VGG16Backbone,
+    build_backbone,
+    register_backbone,
+)
+
+__all__ = [
+    # Framework
+    'Framework',
+    'FeatExtractor',
+    'FeatEmbedder',
+    'DepthEstmator',
+    # Backbones
+    'BackboneBase',
+    'CustomCNNBackbone',
+    'ResNet18Backbone',
+    'ResNet50Backbone',
+    'VGG16Backbone',
+    'build_backbone',
+    'register_backbone',
+]

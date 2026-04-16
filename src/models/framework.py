@@ -5,68 +5,35 @@ from torch import nn
 import torch.nn.functional as F
 
 from .base_block import Conv_block, Basic_block
+from .backbones import build_backbone
 
 sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', '..', '..'))
 from common.utils.model_init import init_weights
 
 
 class FeatExtractor(nn.Module):
-    '''
+    """Thin wrapper delegating to a BackboneBase instance.
+
+    Backward-compatible: old configs without 'backbone' key default to 'custom_cnn'.
+    """
+
+    def __init__(self, backbone_name='custom_cnn', **backbone_kwargs):
+        """
         Args:
-            in_ch (int): the channel numbers of input features
-            AdapNorm (bool): 
-                'True' allow the Conv_block to combine BN and IN
-                'False' allow the Conv_block to use BN
-            AdapNorm_attention_flag:
-                '1layer' allow the Conv_block to use 1layer FC to generate the balance factor
-                '2layer' allow the Conv_block to use 2layer FC to generate the balance factor
-            model_initial:
-                'kaiming' allow the Conv_block to use 'kaiming' methods to initialize the networks
-    '''
-
-    def __init__(self, in_ch=6, AdapNorm=True, AdapNorm_attention_flag='1layer', model_initial='kaiming'):
+            backbone_name (str): registry key ('custom_cnn', 'resnet18', 'resnet50', 'vgg16')
+            **backbone_kwargs: forwarded to the backbone constructor.
+                               For 'custom_cnn': in_ch, AdapNorm, AdapNorm_attention_flag,
+                               model_initial. Ignored for pretrained backbones.
+        """
         super(FeatExtractor, self).__init__()
-        self.AdapNorm = AdapNorm
-        self.AdapNorm_attention_flag = AdapNorm_attention_flag
-        self.model_initial = model_initial
-
-        self.inc = Conv_block(in_ch, 64, self.AdapNorm, self.AdapNorm_attention_flag, self.model_initial)
-        self.down1 = Basic_block(64, 128, self.AdapNorm, self.AdapNorm_attention_flag, self.model_initial)
-        self.down2 = Basic_block(128, 128, self.AdapNorm, self.AdapNorm_attention_flag, self.model_initial)
-        self.down3 = Basic_block(128, 128, self.AdapNorm, self.AdapNorm_attention_flag, self.model_initial)
+        self.backbone_name = backbone_name
+        self.backbone = build_backbone(backbone_name, **backbone_kwargs)
 
     def forward(self, x, params=None):
-        if params is not None:
-            params_inc = {}
-            params_down1 = {}
-            params_down2 = {}
-            params_down3 = {}
-            for k in params:
-                if 'inc' in k:
-                    params_inc[k] = params[k]
-                elif 'down1' in k:
-                    params_down1[k] = params[k]
-                elif 'down2' in k:
-                    params_down2[k] = params[k]
-                elif 'down3' in k:
-                    params_down3[k] = params[k]
-                else:
-                    pass
-            dx1 = self.inc(x, params_inc)
-            dx2 = self.down1(dx1, params_down1)
-            dx3 = self.down2(dx2, params_down2)
-            dx4 = self.down3(dx3, params_down3)
-        else:
-            dx1 = self.inc(x)
-            dx2 = self.down1(dx1)
-            dx3 = self.down2(dx2)
-            dx4 = self.down3(dx3)
+        return self.backbone.forward(x, params)
 
-        re_dx2 = F.adaptive_avg_pool2d(dx2, 32)
-        re_dx3 = F.adaptive_avg_pool2d(dx3, 32)
-        catfeat = torch.cat([re_dx2, re_dx3, dx4], 1)
-
-        return catfeat, dx4
+    def get_meta_params(self):
+        return self.backbone.get_meta_params()
 
 
 class FeatEmbedder(nn.Module):
@@ -180,36 +147,35 @@ class DepthEstmator(nn.Module):
 
 
 class Framework(nn.Module):
-    '''
-        Framework contains all the modules
+    """Full ANRL model with modular FeatExtractor.
 
-        Args:
-            in_ch (int): the channel numbers of input features
-            mid_ch (int): the channel numbers of output features in FeatExtractor
-            AdapNorm (bool): 
-                'True' allow the Conv_block to combine BN and IN
-                'False' allow the Conv_block to use BN
-            AdapNorm_attention_flag:
-                '1layer' allow the Conv_block to use 1layer FC to generate the balance factor
-                '2layer' allow the Conv_block to use 2layer FC to generate the balance factor
-            model_initial:
-                'kaiming' allow the Conv_block to use 'kaiming' methods to initialize the networks
-    '''
+    Backward-compatible: old configs without 'backbone' key default to 'custom_cnn'.
+    """
 
-    def __init__(self, in_ch=6, mid_ch=384, AdapNorm=True, AdapNorm_attention_flag='1layer', model_initial='kaiming'):
-
+    def __init__(
+        self,
+        in_ch=6,
+        mid_ch=384,
+        AdapNorm=True,
+        AdapNorm_attention_flag='1layer',
+        model_initial='kaiming',
+        backbone='custom_cnn',
+    ):
         super(Framework, self).__init__()
         self.in_ch = in_ch
         self.mid_ch = mid_ch
         self.AdapNorm = AdapNorm
         self.AdapNorm_attention_flag = AdapNorm_attention_flag
         self.model_initial = model_initial
+        self.backbone_name = backbone
 
-        self.FeatExtractor = FeatExtractor(in_ch=self.in_ch,
-                                           AdapNorm=self.AdapNorm,
-                                           AdapNorm_attention_flag=self.AdapNorm_attention_flag,
-                                           model_initial=self.model_initial)
-
+        self.FeatExtractor = FeatExtractor(
+            backbone_name=backbone,
+            in_ch=in_ch,
+            AdapNorm=AdapNorm,
+            AdapNorm_attention_flag=AdapNorm_attention_flag,
+            model_initial=model_initial,
+        )
         self.Classifier = FeatEmbedder(in_ch=self.mid_ch, AdapNorm=False)
         self.DepthEstmator = DepthEstmator(in_ch=self.mid_ch, AdapNorm=False)
 

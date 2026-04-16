@@ -1,0 +1,5 @@
+Why depthmap
+
+Khó khăn tìm dataset -> augment
+
+augment: physical + digital (cải tiến)
