@@ -106,11 +106,11 @@ class DG_Dataset(Dataset):
         if self.split == 'train' and self.category == 'pos':
             self.items_1 = open(self.train_pos_list1_path).read().splitlines()
             self.items_2 = open(self.train_pos_list2_path).read().splitlines()
-            self.items_3 = open(self.train_pos_list3_path).read().splitlines()
+            self.items_3 = open(self.train_pos_list3_path).read().splitlines() if self.train_pos_list3_path else []
         elif self.split == 'train' and self.category == 'neg':
             self.items_1 = open(self.train_neg_list1_path).read().splitlines()
             self.items_2 = open(self.train_neg_list2_path).read().splitlines()
-            self.items_3 = open(self.train_neg_list3_path).read().splitlines()
+            self.items_3 = open(self.train_neg_list3_path).read().splitlines() if self.train_neg_list3_path else []
         elif self.split == 'val' and self.category == 'pos':
             self.items = open(self.val_pos_list_path).read().splitlines()
         elif self.split == 'val' and self.category == 'neg':
@@ -134,7 +134,8 @@ class DG_Dataset(Dataset):
         if self.split == 'train':
             print(f'=> Total number of items_1: {len(self.items_1)}')
             print(f'=> Total number of items_2: {len(self.items_2)}')
-            print(f'=> Total number of items_3: {len(self.items_3)}')
+            if self.train_pos_list3_path or self.train_neg_list3_path:
+                print(f'=> Total number of items_3: {len(self.items_3)}')
         print(f'=> Image mode: {self.img_mode}')
 
     def _get_item_index(self, index=0, items=None):
@@ -225,16 +226,20 @@ class DG_Dataset(Dataset):
                     break
             prob_value = random.random()
             if domain and domain in self.augment_datasets and prob_value < 0.6:
+                tt = ''
                 if prob_value < 0.3:
                     img = self.moire(img)
                     label = 1
+                    tt = 'moire'
                 else: # 0.3 <= prob_value < 0.6
                     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                     img_pil = Image.fromarray(img_rgb)
                     transformed_image_pil = self.color_jitter(img_pil)
                     img = cv2.cvtColor(np.array(transformed_image_pil), cv2.COLOR_RGB2BGR)
                     label = 1
-                
+                    tt = 'color'
+                # print('augment', tt)
+
                 # Final stages: t1 and t2 (only on augmented samples)
                 img_pilot = Image.fromarray(img) # Treat as BGR-in-RGB-memory for ColorTrans
                 img_rgb = self.t1(img_pilot)
@@ -243,6 +248,17 @@ class DG_Dataset(Dataset):
                 
                 # Convert back to BGR to maintain consistency with the rest of the pipeline
                 img = cv2.cvtColor(img_final_rgb, cv2.COLOR_RGB2BGR)
+
+                # DEBUG: save first 3 images to data/testing
+                # if not getattr(self, '_debug_saved', False):
+                #     import os, hashlib, time
+                #     out_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'testing')
+                #     uid = hashlib.md5(str(time.time()).encode()).hexdigest()[:6]
+                #     if img_final_rgb is not None:
+                #         # cv2.imwrite(os.path.join(out_dir, f'debug_rgb_{uid}.png'), img_final_rgb)
+                #         cv2.imwrite(os.path.join(out_dir, f'debug_bgr_{uid}.png'), img)
+                #         print(f'[DEBUG] saved {out_dir}/debug_rgb_{uid}.png and debug_bgr_{uid}.png')
+                #     self._debug_saved = True
 
         if getattr(self, 'crop_face_from_5points', None):
             x1, x2, y1, y2 = get_face_box(img, res, margin=self.margin)
@@ -302,28 +318,20 @@ class DG_Dataset(Dataset):
 
     def __getitem__(self, index):
         if self.split == 'train':
-            # get data from item_1
+            imgs, depth_imgs, labels, img_dirs = [], [], [], []
+            for items in [self.items_1, self.items_2, self.items_3]:
+                if items:
+                    if self.return_path:
+                        img_i, label_i, depth_img_i, img_dir_i = self.__getitem_once(index, items)
+                        img_dirs.append(img_dir_i)
+                    else:
+                        img_i, label_i, depth_img_i = self.__getitem_once(index, items)
+                    imgs.append(img_i); depth_imgs.append(depth_img_i); labels.append(label_i)
+            img       = torch.stack(imgs,       dim=0)
+            depth_img = torch.stack(depth_imgs, dim=0)
+            label     = torch.from_numpy(np.array(labels))
             if self.return_path:
-                img_1, label_1, depth_img_1, img_dir_1 = self.__getitem_once(index, self.items_1)
-            else:
-                img_1, label_1, depth_img_1 = self.__getitem_once(index, self.items_1)
-            # get data from item_2
-            if self.return_path:
-                img_2, label_2, depth_img_2, img_dir_2 = self.__getitem_once(index, self.items_2)
-            else:
-                img_2, label_2, depth_img_2 = self.__getitem_once(index, self.items_2)
-            # get data from item_3
-            if self.return_path:
-                img_3, label_3, depth_img_3, img_dir_3 = self.__getitem_once(index, self.items_3)
-            else:
-                img_3, label_3, depth_img_3 = self.__getitem_once(index, self.items_3)
-
-            # need check
-            img = torch.stack((img_1, img_2, img_3), dim=0)
-            depth_img = torch.stack((depth_img_1, depth_img_2, depth_img_3), dim=0)
-            label = torch.from_numpy(np.array([label_1, label_2, label_3]))
-            if self.return_path:
-                img_dir = [img_dir_1, img_dir_2, img_dir_3]
+                img_dir = img_dirs
         else:
             if self.return_path:
                 img, label, depth_img, img_dir = self.__getitem_once(index, self.items)

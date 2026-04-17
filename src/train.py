@@ -51,7 +51,7 @@ class ANRLTask(BaseTask):
     def feat_extractor(self):
         """Access FeatExtractor whether model is DDP-wrapped or not."""
         if hasattr(self.model, 'module'):
-            return self.feat_extractor
+            return self.model.module.FeatExtractor
         return self.model.FeatExtractor
 
     def _build_losses(self, **kwargs):
@@ -181,7 +181,7 @@ class ANRLTask(BaseTask):
             return probs
 
     def compute_losses(self, output, depth, feat, domain_meta_targets, domain_meta_depth, center_real, center_fake,
-                       num_real, index):
+                       num_real, index, num_domains):
         loss_1 = self.criterion(output, domain_meta_targets)
         loss_2 = self.criterion_2(depth.squeeze(), domain_meta_depth)
 
@@ -197,7 +197,7 @@ class ANRLTask(BaseTask):
         # calculate the domain loss and discrimination loss
         AA_loss = self.criterion_3(feat_pool_real, center_real[index].detach())
         AB_loss = 0
-        for k in range(2):
+        for k in range(num_domains - 1):
             if not k == index:
                 AB_loss += self.criterion_3(feat_pool_real, center_real[k].detach())
 
@@ -237,8 +237,9 @@ class ANRLTask(BaseTask):
         self.model.train()
 
         # to initialize the centor
-        center_real = torch.ones(3, 384).to(self.device)
-        center_fake = torch.ones(3, 384).to(self.device)
+        center_real = None
+        center_fake = None
+        num_domains = None
 
         for i, (datas_pos, datas_neg) in enumerate(zip(self.dg_train_pos, self.dg_train_neg)):
             # Skip batches if resuming mid-epoch
@@ -254,6 +255,11 @@ class ANRLTask(BaseTask):
             # generate the meta_train and meta_test index
             domain_list = list(range(datas_pos[0].shape[1]))
             random.shuffle(domain_list)
+
+            if num_domains is None:
+                num_domains = datas_pos[0].shape[1]
+                center_real = torch.ones(num_domains, 384, device=self.device)
+                center_fake = torch.ones(num_domains, 384, device=self.device)
 
             meta_train_list = domain_list[:self.cfg.train.metasize]
             meta_test_list = domain_list[self.cfg.train.metasize:]
@@ -291,7 +297,7 @@ class ANRLTask(BaseTask):
                 num_real = int(feat.shape[0] / 2)
                 sub_loss_1, sub_loss_2, sub_loss_domain, sub_loss_discri = self.compute_losses(
                     output, depth, feat, domain_meta_train_targets, domain_meta_train_depth, center_real, center_fake,
-                    num_real, index)
+                    num_real, index, num_domains)
                 loss_1 += sub_loss_1
                 loss_2 += sub_loss_2
                 loss_domain += sub_loss_domain
@@ -374,7 +380,7 @@ class ANRLTask(BaseTask):
                 num_real = int(feat.shape[0] / 2)
                 sub_loss_1, sub_loss_2, sub_loss_domain, sub_loss_discri = self.compute_losses(
                     output, depth, feat, domain_meta_test_targets, domain_meta_test_depth, center_real, center_fake,
-                    num_real, index)
+                    num_real, index, num_domains)
                 loss_1 += sub_loss_1
                 loss_2 += sub_loss_2
                 loss_domain += sub_loss_domain

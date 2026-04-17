@@ -75,9 +75,11 @@ def test_module(model, test_data_loaders, forward_function, device='cuda', distr
         y_preds = []
         y_trues = []
         for key in prob_dict.keys():
-            # calculate the scores in video-level via averaging the scores of the images from the same videos
+            # video-level: average probs, majority-vote for label (must stay binary for roc_curve)
             avg_single_video_prob = sum(prob_dict[key]) / len(prob_dict[key])
-            avg_single_video_label = sum(label_dict[key]) / len(label_dict[key])
+            labels_arr = np.array(label_dict[key])
+            # majority vote — round to nearest int (0 or 1)
+            avg_single_video_label = np.round(labels_arr.mean()).astype(int)
             y_preds = np.append(y_preds, avg_single_video_prob)
             y_trues = np.append(y_trues, avg_single_video_label)
 

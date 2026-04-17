@@ -1,5 +1,21 @@
-Why depthmap
+
+
+- Why depthmap: depthmap spoof = 0, net thường như MTCNN, PRNet ko có khả năng phân biệt spoof. figure: ảnh real face -> depth, ảnh spoof -> zero depth
+
+- Backbone: ResNet, VGG đều được. Ở đây là custom, cho coi architecture (supplementary material)
+
+#  code:
+- Map paper -> src các component
+- Giải thích Framework, train.py
+- CM2N.yaml. Cho xem config, meta list
+
+Train helper:
+- accumulation grad vs normal. formula 
+- StepLR scheduler
+
 
 Khó khăn tìm dataset -> augment
 
-augment: physical + digital (cải tiến)
+# Extension:
+augment: physical 
+experi: t-SNE. giải thích tí về t-SNE, ưu, nhược

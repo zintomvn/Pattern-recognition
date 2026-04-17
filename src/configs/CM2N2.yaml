@@ -15,8 +15,8 @@ dataset:
     train_neg_list2_path: ../data/processed/meta_lists/MSU-MFSD_train_neg.txt
     train_pos_list3_path:
     train_neg_list3_path:
-    val_pos_list_path: ../data/processed/meta_lists/MSU-MFSD_test_pos.txt
-    val_neg_list_path: ../data/processed/meta_lists/MSU-MFSD_test_neg.txt
+    val_pos_list_path: ../data/processed/meta_lists/NUAA_train_pos.txt
+    val_neg_list_path: ../data/processed/meta_lists/NUAA_train_neg.txt
     test_pos_list_path: ../data/processed/meta_lists/NUAA_test_pos.txt
     test_neg_list_path: ../data/processed/meta_lists/NUAA_test_neg.txt
     img_mode: rgb_hsv
@@ -26,7 +26,7 @@ dataset:
     margin: 2
     return_path: True
      # e.g. ['CASIA', 'MSU-MFSD'] — empty = no 
-    augment_datasets: [] 
+    augment_datasets: ['CASIA', 'MSU-MFSD'] 
     
 transform:
   image_size: 256

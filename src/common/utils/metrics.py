@@ -42,7 +42,7 @@ def cal_metrics(y_trues, y_preds, threshold=0.5):
 
     metrics = EasyDict()
 
-    fpr, tpr, thresholds = roc_curve(y_trues, y_preds)
+    fpr, tpr, thresholds = roc_curve(y_trues, y_preds, pos_label=1)
     metrics.AUC = auc(fpr, tpr)
 
     try:
