@@ -28,7 +28,7 @@ venv/
 Thumbs.db
 
 # Dataset
-data/
+/data/
 /datasets/
 
 # Output folders
