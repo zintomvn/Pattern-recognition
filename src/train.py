@@ -337,7 +337,6 @@ class ANRLTask(BaseTask):
 
             attention_parameters = attention_parameters_extor
 
-            # calculate the gradients (meta-learning inner loop — grad computation only, no param update)
             with amp.autocast():
                 grads_AttentionNet = torch.autograd.grad(train_loss,
                                                          attention_parameters,

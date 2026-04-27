@@ -11,8 +11,8 @@ import albumentations as A
 # Constants
 DATASET = "CASIA" # Change this for other datasets (e.g., CelebASpoof)
 META_LIST_PATH = f"data/processed/meta_lists/{DATASET}_train_pos.txt"
-OUTPUT_DIR_BASE = f"data/processed/{DATASET}/train/spoof"
-FILE_LIMIT = 100
+OUTPUT_DIR_BASE = f"data/testing/"
+FILE_LIMIT = 50
 INPUT_SIZE = 256
 
 # Add src to path to import Moire
@@ -117,7 +117,7 @@ def main():
             actual_path = resolve_path(img_rel_path)
             if not actual_path:
                 continue
-                
+            
             img = cv2.imread(actual_path)
             if img is None:
                 continue

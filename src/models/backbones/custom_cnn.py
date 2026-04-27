@@ -27,9 +27,7 @@ class CustomCNNBackbone(BackboneBase):
     Output: concat[re_pool(down1), re_pool(down2), down3]
             → 128+128+128 = 384 channels @ 32x32
 
-    MAML: get_meta_params() returns AttentionNet params inside Conv_block.
-          forward() routes params dict to each Conv_block for fast-weight updates.
-
+    
     Args:
         in_ch                  (int): input channels (default 6)
         AdapNorm               (bool): enable BN+IN blend via attention
@@ -63,8 +61,8 @@ class CustomCNNBackbone(BackboneBase):
     # ------------------------------------------------------------------ #
     def forward(self, x, params=None):
         dx1 = self.inc(x,   self._slice_params(params, 'inc'))
-        dx2 = self.down1(dx1, self._slice_params(params, 'down1'))
-        dx3 = self.down2(dx2, self._slice_params(params, 'down2'))
+        dx2 = self.down1(dx1, self._slice_params(params, 'down1')) # (B, 128, 32, 32)
+        dx3 = self.down2(dx2, self._slice_params(params, 'down2')) # (B, 128, 32, 32)
         dx4 = self.down3(dx3, self._slice_params(params, 'down3'))
 
         re_dx2   = F.adaptive_avg_pool2d(dx2, 32)

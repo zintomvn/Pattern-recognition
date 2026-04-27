@@ -1,13 +1,33 @@
+# 2 
+- Give link to author repo: https://github.com/Tencent/TFace/tree/master/security/tasks/Face-Anti-Spoofing/ANRL
 
+- Proof of running code, experiment success.
+
+- Datasets (domains) used: casia-fasd, MSU-MFSD, NUAA (give links in refs.bib and cite paper)
+
+- Setup. 
+ + Pipeline: Preprocessing -> Create train configs -> Train model -> Evaluate on test set -> Visualize: t-SNE, feature map weights. Draw tikz figure for this.
+    + Preprocessing: Create lists of samples (split spoof (positive) and live (negative) list) -> Generate PRNet depth maps for live faces
+ + CASIA, MSU-MFSD (train) -> MSU-MFSD (validate) -> NUAA (test). Details: meta-train size: 1 dataset, meta-test and meta-train domains are shuffled. 
+ + Hardware: Google Colab (T4 GPU. Specify RAM, GPU RAM). Hyperparams in config (CM2N.yaml)
+ + Configs: see config (CM2N.yaml), checkpoints to resume (in case out of time, next day), logs to monitor
+ + Proof: Experiment figures, tables of metrics (create template, I will add later)
+ 
+#  3
+
+- Model ensure: # of Live = spoof
 
 - Why depthmap: depthmap spoof = 0, net thường như MTCNN, PRNet ko có khả năng phân biệt spoof. figure: ảnh real face -> depth, ảnh spoof -> zero depth
 
 - Backbone: ResNet, VGG đều được. Ở đây là custom, cho coi architecture (supplementary material)
 
-#  code:
 - Map paper -> src các component
 - Giải thích Framework, train.py
 - CM2N.yaml. Cho xem config, meta list
+
+- Explain each component framework, if modified or removed
+
+- Add changed locations: many backbones, dataset (2 datasets), train checkpoints & grad accumulate
 
 Train helper:
 - accumulation grad vs normal. formula 

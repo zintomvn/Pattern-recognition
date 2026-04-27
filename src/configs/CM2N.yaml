@@ -15,8 +15,8 @@ dataset:
     train_neg_list2_path: ../data/processed/meta_lists/MSU-MFSD_train_neg.txt
     train_pos_list3_path:
     train_neg_list3_path:
-    val_pos_list_path: ../data/processed/meta_lists/MSU-MFSD_test_pos.txt
-    val_neg_list_path: ../data/processed/meta_lists/MSU-MFSD_test_neg.txt
+    val_pos_list_path: ../data/processed/meta_lists/NUAA_train_pos.txt
+    val_neg_list_path: ../data/processed/meta_lists/NUAA_train_neg.txt
     test_pos_list_path: ../data/processed/meta_lists/NUAA_test_pos.txt
     test_neg_list_path: ../data/processed/meta_lists/NUAA_test_neg.txt
     img_mode: rgb_hsv
@@ -69,7 +69,7 @@ loss_3:
 optimizer:
   name: Adam
   params:
-    lr: 0.0001
+    lr: 0.001
     weight_decay: 0.00001
 
 scheduler:
@@ -84,7 +84,7 @@ train:
   accumulation_steps: 8
   print_interval: 10
   metasize: 1
-  meta_step_size: 0.0001
+  meta_step_size: 0.001
 
 val:
   batch_size: 4
